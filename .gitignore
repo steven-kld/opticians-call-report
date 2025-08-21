@@ -41,7 +41,6 @@ pip-wheel-metadata/
 Thumbs.db
 
 # ---- Vercel ----
-.vercel
 .vercel_build_output/
 
 # ---- Secrets ----
