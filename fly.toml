@@ -12,10 +12,15 @@ primary_region = "lhr"
   internal_port = 8080
   protocol = "tcp"
 
-  [[services.ports]]
-    port = 80
+  # HTTPS
   [[services.ports]]
     port = 443
+    handlers = ["tls", "http"]
+
+  # HTTP (optional)
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
 
   [[services.http_checks]]
     interval = "10s"
