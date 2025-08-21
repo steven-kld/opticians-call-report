@@ -1,10 +1,11 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Response
 from fastapi.responses import HTMLResponse
-import asyncio, re, zipfile, os, openai, tempfile, json
+import asyncio, re, zipfile, os, openai, tempfile, json, csv, io
 from pathlib import Path
 from datetime import datetime
 import pandas as pd
 from io import BytesIO
+from starlette.responses import StreamingResponse
 
 app = FastAPI()
 
@@ -144,68 +145,70 @@ Transcript:
     return structured_json
         
 @app.post("/upload_zip")
-async def handle_zip_upload(zip_file: UploadFile = File(...)):
+async def upload_zip(zip_file: UploadFile = File(...)):
     if not zip_file.filename.lower().endswith(".zip"):
         raise HTTPException(status_code=400, detail="ZIP must be .zip")
 
-    # Stream upload to a temp file instead of reading into memory
+    # stream upload to disk (avoid 150MB in RAM)
     with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
         while True:
             chunk = await zip_file.read(1024 * 1024)  # 1MB
             if not chunk:
                 break
             tmp.write(chunk)
-        path = tmp.name
+        zip_path = tmp.name
     await zip_file.close()
 
-    try:
-        wav_rows, tasks = [], []
-        sem = asyncio.Semaphore(4)  # keep small on 1GB instances
-        loop = asyncio.get_running_loop()
+    fname = f'calls_{datetime.utcnow().strftime("%Y%m%d-%H%M%S")}.csv'
+    headers = {"Content-Disposition": f'attachment; filename="{fname}"'}
 
-        def read_member(zf, info):
-            with zf.open(info, "r") as f:
-                return f.read()
-
-        with zipfile.ZipFile(path) as zf:
-            for info in zf.infolist():
-                if info.is_dir() or not info.filename.lower().endswith(".wav"):
-                    continue
-                name = Path(info.filename).name
-
-                async def _t(info=info, name=name):
-                    async with sem:
-                        raw = await loop.run_in_executor(None, read_member, zf, info)
-                        return await loop.run_in_executor(None, transcribe_one, raw)
-
-                tasks.append(_t())
-                wav_rows.append({
-                    "filename": name,
-                    "site": extract_site(name),
-                    "phone key": extract_phone_key(name),
-                })
-
-            transcripts = await asyncio.gather(*tasks, return_exceptions=True)
-
-        for row, tr in zip(wav_rows, transcripts):
-            if isinstance(tr, Exception):
-                row["transcript"] = ""
-                row["error"] = repr(tr)
-            else:
-                row["transcript"] = tr
-
-        csv_bytes = pd.DataFrame(wav_rows).to_csv(index=False).encode("utf-8")
-        fname = f'calls_{datetime.utcnow().strftime("%Y%m%d-%H%M%S")}.csv'
-        return Response(
-            content=csv_bytes,
-            media_type="text/csv; charset=utf-8",
-            headers={"Content-Disposition": f'attachment; filename="{fname}"'}
-        )
-    finally:
+    async def generate():
         try:
-            os.remove(path)
-        except Exception:
-            pass
+            # write header immediately
+            header_io = io.StringIO()
+            csv.writer(header_io).writerow(["filename", "site", "phone key", "transcript", "error"])
+            yield header_io.getvalue().encode("utf-8")
+
+            loop = asyncio.get_running_loop()
+
+            def read_member(zf, info):
+                with zf.open(info, "r") as f:
+                    return f.read()
+
+            # process sequentially (lowest memory, steady output)
+            with zipfile.ZipFile(zip_path) as zf:
+                for info in zf.infolist():
+                    if info.is_dir() or not info.filename.lower().endswith(".wav"):
+                        continue
+                    name = Path(info.filename).name
+                    site = extract_site(name) or ""
+                    phone_key = extract_phone_key(name) or ""
+
+                    # read file bytes off-thread
+                    raw = await loop.run_in_executor(None, read_member, zf, info)
+
+                    # transcribe off-thread
+                    try:
+                        tr = await loop.run_in_executor(None, transcribe_one, raw)
+                        transcript = json.dumps(tr, ensure_ascii=False)
+                        err = ""
+                    except Exception as e:
+                        transcript, err = "", repr(e)
+
+                    row_io = io.StringIO()
+                    csv.writer(row_io).writerow([name, site, phone_key, transcript, err])
+                    yield row_io.getvalue().encode("utf-8")
+                    # optional: small heartbeat if one file takes a long time
+                    # yield b""
+
+        finally:
+            try:
+                os.remove(zip_path)
+            except Exception:
+                pass
+
+    return StreamingResponse(generate(), media_type="text/csv; charset=utf-8", headers=headers)
+
 
 
 @app.post("/upload_csv")

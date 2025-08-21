@@ -1,26 +1,17 @@
-# fly.toml
-app = "tete-fastapi"            # <= change to your app name
+app = "tete-fastapi"
 primary_region = "lhr"
 
 [build]
   dockerfile = "Dockerfile"
 
-[env]
-  # leave empty; set secrets via `fly secrets`
-
 [[services]]
   internal_port = 8080
   protocol = "tcp"
 
-  # HTTPS
+  # HTTPS only
   [[services.ports]]
     port = 443
     handlers = ["tls", "http"]
-
-  # HTTP (optional)
-  [[services.ports]]
-    port = 80
-    handlers = ["http"]
 
   [[services.http_checks]]
     interval = "10s"
