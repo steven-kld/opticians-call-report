@@ -144,62 +144,69 @@ Transcript:
     return structured_json
         
 @app.post("/upload_zip")
-async def handle_zip_upload(
-    zip_file: UploadFile = File(...),
-):
+async def handle_zip_upload(zip_file: UploadFile = File(...)):
     if not zip_file.filename.lower().endswith(".zip"):
         raise HTTPException(status_code=400, detail="ZIP must be .zip")
 
-    print("Start processing audio")
-
-    content = await zip_file.read()
+    # Stream upload to a temp file instead of reading into memory
+    with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
+        while True:
+            chunk = await zip_file.read(1024 * 1024)  # 1MB
+            if not chunk:
+                break
+            tmp.write(chunk)
+        path = tmp.name
     await zip_file.close()
 
-    wav_rows = []
-    tasks = []
-    sem = asyncio.Semaphore(8) # 8 in parallel, could be increased
-    loop = asyncio.get_running_loop()
+    try:
+        wav_rows, tasks = [], []
+        sem = asyncio.Semaphore(4)  # keep small on 1GB instances
+        loop = asyncio.get_running_loop()
 
-    with zipfile.ZipFile(BytesIO(content)) as zf:
-        for info in zf.infolist():
-            if info.is_dir() or not info.filename.lower().endswith(".wav"):
-                continue
-            raw = zf.read(info.filename)
-            name = Path(info.filename).name
+        def read_member(zf, info):
+            with zf.open(info, "r") as f:
+                return f.read()
 
-            async def _t(raw=raw, name=name):
-                async with sem:
-                    return await loop.run_in_executor(None, transcribe_one, raw)
+        with zipfile.ZipFile(path) as zf:
+            for info in zf.infolist():
+                if info.is_dir() or not info.filename.lower().endswith(".wav"):
+                    continue
+                name = Path(info.filename).name
 
-            tasks.append(_t())
+                async def _t(info=info, name=name):
+                    async with sem:
+                        raw = await loop.run_in_executor(None, read_member, zf, info)
+                        return await loop.run_in_executor(None, transcribe_one, raw)
 
-            wav_rows.append({
-                "filename": name,
-                "site": extract_site(name),
-                "phone key": extract_phone_key(name),
-            })
+                tasks.append(_t())
+                wav_rows.append({
+                    "filename": name,
+                    "site": extract_site(name),
+                    "phone key": extract_phone_key(name),
+                })
 
-    transcripts = await asyncio.gather(*tasks, return_exceptions=True)
+            transcripts = await asyncio.gather(*tasks, return_exceptions=True)
 
-    for row, tr in zip(wav_rows, transcripts):
-        if isinstance(tr, Exception):
-            row["transcript"] = ""
-            row["error"] = repr(tr)
-        else:
-            row["transcript"] = tr
+        for row, tr in zip(wav_rows, transcripts):
+            if isinstance(tr, Exception):
+                row["transcript"] = ""
+                row["error"] = repr(tr)
+            else:
+                row["transcript"] = tr
 
-    # serialize to CSV
-    wav_df = pd.DataFrame(wav_rows)
-    print(wav_df)
+        csv_bytes = pd.DataFrame(wav_rows).to_csv(index=False).encode("utf-8")
+        fname = f'calls_{datetime.utcnow().strftime("%Y%m%d-%H%M%S")}.csv'
+        return Response(
+            content=csv_bytes,
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{fname}"'}
+        )
+    finally:
+        try:
+            os.remove(path)
+        except Exception:
+            pass
 
-    csv_bytes = wav_df.to_csv(index=False).encode("utf-8")
-    fname = f'calls_{datetime.utcnow().strftime("%Y%m%d-%H%M%S")}.csv'
-
-    return Response(
-        content=csv_bytes,
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{fname}"'}
-    )
 
 @app.post("/upload_csv")
 async def handle_upload(
