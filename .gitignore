@@ -1,0 +1,50 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+*.log
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+.venv*/
+pip-wheel-metadata/
+
+# Jupyter / IPython
+.ipynb_checkpoints
+*.ipynb
+
+# VSCode / PyCharm / editors
+.vscode/
+.idea/
+
+# ---- Pandas / data files ----
+*.csv
+*.parquet
+*.xls*
+*.json
+*.db
+*.sqlite3
+*.pkl
+
+# ---- OS files ----
+.DS_Store
+Thumbs.db
+
+# ---- Vercel ----
+.vercel
+.vercel_build_output/
+
+# ---- Secrets ----
+.env
+*.key
+*.pem
