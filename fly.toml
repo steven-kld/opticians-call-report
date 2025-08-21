@@ -1,0 +1,30 @@
+# fly.toml
+app = "tete-fastapi"            # <= change to your app name
+primary_region = "lhr"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  # leave empty; set secrets via `fly secrets`
+
+[[services]]
+  internal_port = 8080
+  protocol = "tcp"
+
+  [[services.ports]]
+    port = 80
+  [[services.ports]]
+    port = 443
+
+  [[services.http_checks]]
+    interval = "10s"
+    timeout = "2s"
+    method = "GET"
+    path = "/"
+    protocol = "http"
+
+  [services.concurrency]
+    type = "connections"
+    soft_limit = 40
+    hard_limit = 50
