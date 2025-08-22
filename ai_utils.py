@@ -25,25 +25,4 @@ def transcribe_one(raw: bytes):
                 response_format="text",
             )
 
-        prompt = f"""
-Take the following call transcript. It is a two-party phone conversation
-between a manager (receptionist/staff) and a client (caller).
-Rewrite it as a JSON array, turn by turn, where each item is an object
-with a single key ("manager" or "client") and the corresponding utterance as value.
-
-Transcript:
-{response}
-"""
-
-        completion = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "You are a parser that converts transcripts into structured JSON."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0,
-        )
-
-        structured_json = extract_json_block(completion.choices[0].message.content)
-
-    return structured_json
+    return {"raw": response}
