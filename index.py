@@ -1,11 +1,11 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Response
 from fastapi.responses import HTMLResponse
-import asyncio, re, zipfile, os, openai, tempfile, json, csv, io
-from pathlib import Path
+import re, os, json
 from datetime import datetime
 import pandas as pd
 from io import BytesIO
-from starlette.responses import StreamingResponse
+from db_utils import insert_raw_report_df
+from zip_utils import save_zip, get_wav_names_zip, get_existing_calls, extract_selected_wavs, schedule_transcription_job
 
 app = FastAPI()
 
@@ -21,16 +21,19 @@ async def upload_form():
       <button type="submit">Build report</button>
     </form>
     <hr>
-    <h3>2. Upload audio ZIP → get call-id,time,transcription</h3>
+
+    <h3>2. Upload audio ZIP → count files to process</h3>
     <form id="zipForm">
       <input type="file" name="zip_file" accept=".zip" required>
-      <button type="submit">Transcribe</button>
+      <button type="submit">Check</button>
     </form>
+    <pre id="zipOut" style="white-space:pre-wrap;"></pre>
     <hr>
+
     <h3>3. Match report + calls CSVs</h3>
     <form id="matchForm">
-        <input type="file" name="csv_files" accept=".csv" multiple required>
-        <button type="submit">Match</button>
+      <input type="file" name="csv_files" accept=".csv" multiple required>
+      <button type="submit">Match</button>
     </form>
     <hr>
 
@@ -39,7 +42,7 @@ async def upload_form():
         const data = new FormData(formElem);
         const res = await fetch(url, { method: 'POST', body: data });
         if (!res.ok) {
-          alert(await res.text().catch(()=>res.statusText));
+          alert(await res.text().catch(() => res.statusText));
           return;
         }
         const blob = await res.blob();
@@ -54,43 +57,40 @@ async def upload_form():
         a.remove();
         URL.revokeObjectURL(a.href);
       }
-      document.getElementById('csvForm').addEventListener('submit', (e) => { e.preventDefault(); postAndDownload(e.target, '/upload_csv'); });
-      document.getElementById('zipForm').addEventListener('submit', (e) => { e.preventDefault(); postAndDownload(e.target, '/upload_zip'); });
-      document.getElementById('matchForm').addEventListener('submit', (e) => { e.preventDefault(); postAndDownload(e.target, '/match_csv'); });
+
+      document.getElementById('csvForm')
+        .addEventListener('submit', (e) => { e.preventDefault(); postAndDownload(e.target, '/upload_csv'); });
+      document.getElementById('matchForm')
+        .addEventListener('submit', (e) => { e.preventDefault(); postAndDownload(e.target, '/match_csv'); });
+
+      document.getElementById('zipForm')
+        .addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const out = document.getElementById('zipOut');
+          out.textContent = 'Processing…';
+
+          const data = new FormData(e.target);
+          const res = await fetch('/upload_zip', { method: 'POST', body: data });
+
+          if (!res.ok) {
+            out.textContent = await res.text().catch(() => res.statusText);
+            return;
+          }
+
+          const ct = res.headers.get('Content-Type') || '';
+          if (ct.includes('application/json')) {
+            const payload = await res.json();
+            // expect backend returns { to_process_count: N }
+            const { to_process_count = 0 } = payload || {};
+            out.textContent = `Files to process: ${to_process_count}`;
+          } else {
+            await postAndDownload(e.target, '/upload_zip');
+          }
+        });
     </script>
   </body>
 </html>
     """
-
-def extract_site(name: str):
-    sites = ["Cheadle", "Heald Green", "Middleton", "Heckmondwike"]
-    for s in sites:
-        if s.lower().replace(" ", "") in name.lower().replace(" ", ""):
-            return s
-    return None
-
-def extract_phone_key(name: str):
-    m = re.search(r"-(\d+)_", name)
-    if not m:
-        return None
-    num = m.group(1)
-    if len(num) >= 7:
-        return num[-7:]
-    return num
-
-def init_openai():
-    return openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-def extract_json_block(text: str):
-    match = re.search(r"(\{.*\}|\[.*\])", text, re.DOTALL)
-    if not match:
-        raise ValueError("No JSON block found in GPT response")
-
-    block = match.group(0)
-    block = re.sub(r"^```(?:json)?", "", block.strip())
-    block = re.sub(r"```$", "", block.strip())
-
-    return json.loads(block)
 
 def extract_mmss_from_filename(name: str):
     if not isinstance(name, str):
@@ -106,110 +106,6 @@ def extract_mmss_from_filename(name: str):
         return pd.NA, pd.NA, pd.NA
     mmss_sec = mm * 60 + ss  # 0..3599
     return mm, ss, mmss_sec
-
-def transcribe_one(raw: bytes):
-    print("Transcribing one")
-    openai_client = init_openai()
-    with tempfile.NamedTemporaryFile(suffix=".wav") as tmp:
-        tmp.write(raw)
-        tmp.flush()
-
-        with open(tmp.name, "rb") as f:
-            response = openai_client.audio.transcriptions.create(
-                model="gpt-4o-transcribe",
-                file=f,
-                response_format="text",
-            )
-
-        prompt = f"""
-Take the following call transcript. It is a two-party phone conversation
-between a manager (receptionist/staff) and a client (caller).
-Rewrite it as a JSON array, turn by turn, where each item is an object
-with a single key ("manager" or "client") and the corresponding utterance as value.
-
-Transcript:
-{response}
-"""
-
-        completion = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "You are a parser that converts transcripts into structured JSON."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0,
-        )
-
-        structured_json = extract_json_block(completion.choices[0].message.content)
-
-    return structured_json
-        
-@app.post("/upload_zip")
-async def upload_zip(zip_file: UploadFile = File(...)):
-    if not zip_file.filename.lower().endswith(".zip"):
-        raise HTTPException(status_code=400, detail="ZIP must be .zip")
-
-    # stream upload to disk (avoid 150MB in RAM)
-    with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
-        while True:
-            chunk = await zip_file.read(1024 * 1024)  # 1MB
-            if not chunk:
-                break
-            tmp.write(chunk)
-        zip_path = tmp.name
-    await zip_file.close()
-
-    fname = f'calls_{datetime.utcnow().strftime("%Y%m%d-%H%M%S")}.csv'
-    headers = {"Content-Disposition": f'attachment; filename="{fname}"'}
-
-    async def generate():
-        try:
-            # write header immediately
-            header_io = io.StringIO()
-            csv.writer(header_io).writerow(["filename", "site", "phone key", "transcript", "error"])
-            yield header_io.getvalue().encode("utf-8")
-
-            loop = asyncio.get_running_loop()
-
-            def read_member(zf, info):
-                with zf.open(info, "r") as f:
-                    return f.read()
-
-            # process sequentially (lowest memory, steady output)
-            with zipfile.ZipFile(zip_path) as zf:
-                for info in zf.infolist():
-                    if info.is_dir() or not info.filename.lower().endswith(".wav"):
-                        continue
-                    name = Path(info.filename).name
-                    site = extract_site(name) or ""
-                    phone_key = extract_phone_key(name) or ""
-
-                    # read file bytes off-thread
-                    raw = await loop.run_in_executor(None, read_member, zf, info)
-
-                    # transcribe off-thread
-                    try:
-                        tr = await loop.run_in_executor(None, transcribe_one, raw)
-                        transcript = json.dumps(tr, ensure_ascii=False)
-                        err = ""
-                    except Exception as e:
-                        transcript, err = "", repr(e)
-
-                    row_io = io.StringIO()
-                    csv.writer(row_io).writerow([name, site, phone_key, transcript, err])
-                    yield row_io.getvalue().encode("utf-8")
-                    # optional: small heartbeat if one file takes a long time
-                    # yield b""
-
-        finally:
-            try:
-                os.remove(zip_path)
-            except Exception:
-                pass
-
-    return StreamingResponse(generate(), media_type="text/csv; charset=utf-8", headers=headers)
-
-
 
 @app.post("/upload_csv")
 async def handle_upload(
@@ -266,6 +162,8 @@ async def handle_upload(
     report_df = pd.DataFrame(per_call_df)
     print(report_df)
 
+    insert_raw_report_df(report_df)
+    
     csv_bytes = report_df.to_csv(index=False).encode("utf-8")
     fname = f'report_{datetime.utcnow().strftime("%Y%m%d-%H%M%S")}.csv'
 
@@ -274,6 +172,42 @@ async def handle_upload(
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{fname}"'}
     )
+
+@app.post("/upload_zip")
+async def upload_zip(zip_file: UploadFile = File(...)):
+    if not zip_file.filename.lower().endswith(".zip"):
+        raise HTTPException(status_code=400, detail="ZIP must be .zip")
+
+    zip_path = await save_zip(zip_file)
+    if not zip_path:
+        return {"to_process_count": 0}
+    
+    try:
+        wav_names = get_wav_names_zip(zip_path)
+        if not wav_names:
+            try: os.remove(zip_path)
+            except Exception: pass
+            return {"to_process_count": 0}
+
+        existing = get_existing_calls(wav_names)
+        to_process = [n for n in wav_names if n not in existing]
+
+        if not to_process:
+            try: os.remove(zip_path)
+            except Exception: pass
+            return {"to_process_count": 0}
+        
+        tmpdir, name_to_path = extract_selected_wavs(zip_path, to_process)
+
+        schedule_transcription_job(name_to_path, to_process, zip_path, tmpdir)
+
+        return {"to_process_count": len(to_process)}
+    
+    except Exception:
+        try: os.remove(zip_path)
+        except Exception: pass
+        return {"to_process_count": 0}
+
 
 @app.post("/match_csv")
 async def handle_upload(csv_files: list[UploadFile] = File(...)):
