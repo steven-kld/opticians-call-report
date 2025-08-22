@@ -1,7 +1,7 @@
 import asyncio, json, os, re, shutil, tempfile, zipfile
 from pathlib import Path
-from fastapi import UploadFile, HTTPException
-from typing import Dict, List, Tuple
+from fastapi import UploadFile
+from typing import Dict, List
 from datetime import datetime
 import pandas as pd
 from ai_utils import transcribe_one
