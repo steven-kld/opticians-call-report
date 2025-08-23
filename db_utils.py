@@ -4,8 +4,8 @@ from psycopg2.errors import UniqueViolation, ForeignKeyViolation
 from psycopg2.extras import execute_values, RealDictCursor
 import pandas as pd
 
-# from dotenv import load_dotenv
-# load_dotenv()
+from dotenv import load_dotenv
+load_dotenv()
 
 def get_db_config():
     return {
@@ -93,3 +93,46 @@ def query_all(sql, params=None):
             cur.execute(sql, params or ())
             return [dict(r) for r in cur.fetchall()]
 
+def update_transcriptions_with_matches(matches_df):
+    rows = matches_df.dropna(subset=["raw_report_id"])
+    if rows.empty:
+        return
+
+    params = [(r["raw_report_id"], r["transcription_id"]) for _, r in rows.iterrows()]
+
+    query = """
+        UPDATE transcriptions t
+        SET call_id = data.call_id
+        FROM (VALUES %s) AS data(call_id, filename)
+        WHERE t.filename = data.filename;
+    """
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            psycopg2.extras.execute_values(
+                cur, query, params, template=None, page_size=500
+            )
+        conn.commit()
+
+def insert_metrics_core(df: pd.DataFrame, page_size=1000):
+    if df.empty:
+        return 0
+
+    cols = ["call_id", "call_type", "is_answered", "practice"]
+    missing = [c for c in cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"metrics DF missing required cols: {missing}")
+
+    rows = [tuple(None if pd.isna(v) else v for v in rec)
+            for rec in df[cols].itertuples(index=False, name=None)]
+
+    query = """
+        INSERT INTO metrics (call_id, call_type, is_answered, practice)
+        VALUES %s
+        ON CONFLICT (call_id) DO NOTHING
+    """
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            psycopg2.extras.execute_values(cur, query, rows, page_size=page_size)
+        conn.commit()
