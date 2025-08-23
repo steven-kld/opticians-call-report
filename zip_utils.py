@@ -1,4 +1,4 @@
-import asyncio, json, os, re, shutil, tempfile, zipfile
+import asyncio, json, os, re, shutil, tempfile, zipfile, io, wave
 from pathlib import Path
 from fastapi import UploadFile
 from typing import Dict, List
@@ -115,6 +115,16 @@ async def _transcription_worker(
         with open(p, "rb") as f:
             return f.read()
 
+    def _wav_duration_sec(wav_bytes: bytes) -> float:
+        try:
+            with wave.open(io.BytesIO(wav_bytes), "rb") as wf:
+                frames = wf.getnframes()
+                rate = wf.getframerate()
+                duration = frames / float(rate)
+                return int(round(duration))
+        except:
+            return int(0)
+    
     try:
         for file_name in to_process:
             path = name_to_path.get(file_name)
@@ -129,17 +139,18 @@ async def _transcription_worker(
 
             try:
                 raw = await loop.run_in_executor(None, _read_bytes, path)
+                duration_sec = await loop.run_in_executor(None, _wav_duration_sec, raw)
                 tr = await loop.run_in_executor(None, transcribe_one, raw)
                 transcript = json.dumps(tr, ensure_ascii=False)
                 print(f"{file_name} | site={site} | phone_key={phone_key} | call_time={call_time}")
                 print(transcript)
                 run_query(
                     """
-                    INSERT INTO transcriptions (filename, site, phone_key, transcript, call_time)
-                    VALUES (%s, %s, %s, %s, %s)
+                    INSERT INTO transcriptions (filename, site, phone_key, transcript, call_time, duration_sec)
+                    VALUES (%s, %s, %s, %s, %s, %s)
                     ON CONFLICT (filename) DO NOTHING
                     """,
-                    (file_name, site, phone_key, transcript, call_time,)
+                    (file_name, site, phone_key, transcript, call_time, duration_sec,)
                 )
             except Exception as e:
                 print(f"FAIL {file_name} | {e!r}")

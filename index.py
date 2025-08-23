@@ -209,201 +209,201 @@ async def upload_zip(zip_file: UploadFile = File(...)):
         return {"to_process_count": 0}
 
 # TODO
-@app.post("/match_csv")
-async def handle_upload(csv_files: list[UploadFile] = File(...)):
-    if len(csv_files) != 2:
-        raise HTTPException(status_code=400, detail="Need exactly 2 CSV files: report and calls")
+# @app.post("/match_csv")
+# async def handle_upload(csv_files: list[UploadFile] = File(...)):
+#     if len(csv_files) != 2:
+#         raise HTTPException(status_code=400, detail="Need exactly 2 CSV files: report and calls")
 
-    report_df, calls_df = None, None
-    for f in csv_files:
-        data = await f.read()
-        await f.close()
-        df = pd.read_csv(BytesIO(data), low_memory=False)
-        name = (f.filename or "").lower()
-        if "report" in name:
-            report_df = df
-        elif "calls" in name:
-            calls_df = df
-        else:
-            raise HTTPException(status_code=400, detail=f"Filename must contain 'report' or 'calls': {f.filename}")
+#     report_df, calls_df = None, None
+#     for f in csv_files:
+#         data = await f.read()
+#         await f.close()
+#         df = pd.read_csv(BytesIO(data), low_memory=False)
+#         name = (f.filename or "").lower()
+#         if "report" in name:
+#             report_df = df
+#         elif "calls" in name:
+#             calls_df = df
+#         else:
+#             raise HTTPException(status_code=400, detail=f"Filename must contain 'report' or 'calls': {f.filename}")
 
-    if report_df is None or calls_df is None:
-        raise HTTPException(status_code=400, detail="Both report and calls CSVs are required")
+#     if report_df is None or calls_df is None:
+#         raise HTTPException(status_code=400, detail="Both report and calls CSVs are required")
 
-    # ---- Validate required columns
-    if "phone key" not in calls_df.columns:
-        raise HTTPException(status_code=400, detail="Calls CSV missing required column: 'phone key'")
-    if "filename" not in calls_df.columns:
-        raise HTTPException(status_code=400, detail="Calls CSV missing required column: 'filename'")
-    if "Call Time" not in report_df.columns:
-        raise HTTPException(status_code=400, detail="Report CSV missing required column: 'Call Time'")
-    if report_df.shape[1] == 0:
-        raise HTTPException(status_code=400, detail="Report CSV has no columns")
+#     # ---- Validate required columns
+#     if "phone key" not in calls_df.columns:
+#         raise HTTPException(status_code=400, detail="Calls CSV missing required column: 'phone key'")
+#     if "filename" not in calls_df.columns:
+#         raise HTTPException(status_code=400, detail="Calls CSV missing required column: 'filename'")
+#     if "Call Time" not in report_df.columns:
+#         raise HTTPException(status_code=400, detail="Report CSV missing required column: 'Call Time'")
+#     if report_df.shape[1] == 0:
+#         raise HTTPException(status_code=400, detail="Report CSV has no columns")
 
-    # ---- Report prep
-    rpt = report_df.copy()
-    report_id_col = rpt.columns[0]  # first column is the ID to return
-    rpt["_report_dt"] = pd.to_datetime(rpt["Call Time"], errors="coerce")
-    rpt["_rep_mmss_sec"] = (rpt["_report_dt"].dt.minute * 60 + rpt["_report_dt"].dt.second).astype("Int64")
-    # digits-only haystack to build ids candidates by phone key
-    rpt["_hay_digits"] = (
-        rpt.astype(str)
-           .apply(lambda s: " | ".join(s.values), axis=1)
-           .str.replace(r"\D", "", regex=True)
-    )
+#     # ---- Report prep
+#     rpt = report_df.copy()
+#     report_id_col = rpt.columns[0]  # first column is the ID to return
+#     rpt["_report_dt"] = pd.to_datetime(rpt["Call Time"], errors="coerce")
+#     rpt["_rep_mmss_sec"] = (rpt["_report_dt"].dt.minute * 60 + rpt["_report_dt"].dt.second).astype("Int64")
+#     # digits-only haystack to build ids candidates by phone key
+#     rpt["_hay_digits"] = (
+#         rpt.astype(str)
+#            .apply(lambda s: " | ".join(s.values), axis=1)
+#            .str.replace(r"\D", "", regex=True)
+#     )
 
-    # ---- Calls prep
-    calls = calls_df.copy()
+#     # ---- Calls prep
+#     calls = calls_df.copy()
 
-    # phone key normalize (keep all digits), min len = 5
-    MIN_LEN = 5
-    calls["_pk"] = calls["phone key"].astype(str).str.replace(r"\D", "", regex=True)
+#     # phone key normalize (keep all digits), min len = 5
+#     MIN_LEN = 5
+#     calls["_pk"] = calls["phone key"].astype(str).str.replace(r"\D", "", regex=True)
 
-    # candidate ids by phone key containment
-    ids_json = []
-    for _, call in calls.iterrows():
-        pk = call["_pk"]
-        if not pk or len(pk) < MIN_LEN:
-            ids_json.append(json.dumps([], ensure_ascii=False))
-            continue
-        mask = rpt["_hay_digits"].str.contains(re.escape(pk), na=False)
-        ids = rpt.loc[mask, report_id_col].astype(str).unique().tolist()
-        ids_json.append(json.dumps(ids, ensure_ascii=False))
-    calls["ids"] = ids_json
+#     # candidate ids by phone key containment
+#     ids_json = []
+#     for _, call in calls.iterrows():
+#         pk = call["_pk"]
+#         if not pk or len(pk) < MIN_LEN:
+#             ids_json.append(json.dumps([], ensure_ascii=False))
+#             continue
+#         mask = rpt["_hay_digits"].str.contains(re.escape(pk), na=False)
+#         ids = rpt.loc[mask, report_id_col].astype(str).unique().tolist()
+#         ids_json.append(json.dumps(ids, ensure_ascii=False))
+#     calls["ids"] = ids_json
 
-    # extract MM:SS and numeric key (0..3599) from filename
-    calls[["call_min", "call_sec", "call_mmss_sec"]] = (
-        calls["filename"]
-            .apply(lambda s: pd.Series(extract_mmss_from_filename(s)))
-            .astype("Int64")
-    )
-    calls["min-sec key"] = calls.apply(
-        lambda r: f"{int(r['call_min']):02d}:{int(r['call_sec']):02d}"
-        if pd.notna(r["call_min"]) and pd.notna(r["call_sec"]) else None,
-        axis=1
-    )
+#     # extract MM:SS and numeric key (0..3599) from filename
+#     calls[["call_min", "call_sec", "call_mmss_sec"]] = (
+#         calls["filename"]
+#             .apply(lambda s: pd.Series(extract_mmss_from_filename(s)))
+#             .astype("Int64")
+#     )
+#     calls["min-sec key"] = calls.apply(
+#         lambda r: f"{int(r['call_min']):02d}:{int(r['call_sec']):02d}"
+#         if pd.notna(r["call_min"]) and pd.notna(r["call_sec"]) else None,
+#         axis=1
+#     )
 
-    # ---- Select closest report id by MM:SS among candidate ids (<= 30s circular)
-    # Build id -> rep_mmss_sec map (as string ids for consistency with calls["ids"])
-    id_map = (
-        rpt[[report_id_col, "_rep_mmss_sec"]]
-        .dropna()
-        .assign(**{report_id_col: lambda d: d[report_id_col].astype(str)})
-        .set_index(report_id_col)["_rep_mmss_sec"]
-        .to_dict()
-    )
+#     # ---- Select closest report id by MM:SS among candidate ids (<= 30s circular)
+#     # Build id -> rep_mmss_sec map (as string ids for consistency with calls["ids"])
+#     id_map = (
+#         rpt[[report_id_col, "_rep_mmss_sec"]]
+#         .dropna()
+#         .assign(**{report_id_col: lambda d: d[report_id_col].astype(str)})
+#         .set_index(report_id_col)["_rep_mmss_sec"]
+#         .to_dict()
+#     )
 
-    def pick_best_id(ids_json_str, call_mmss_sec):
-        try:
-            cand_ids = json.loads(ids_json_str) if isinstance(ids_json_str, str) else []
-        except Exception:
-            cand_ids = []
-        if pd.isna(call_mmss_sec) or not cand_ids:
-            return "[]", pd.NA
+#     def pick_best_id(ids_json_str, call_mmss_sec):
+#         try:
+#             cand_ids = json.loads(ids_json_str) if isinstance(ids_json_str, str) else []
+#         except Exception:
+#             cand_ids = []
+#         if pd.isna(call_mmss_sec) or not cand_ids:
+#             return "[]", pd.NA
 
-        c = int(call_mmss_sec)
-        best_id, best_delta = None, None
-        for rid in cand_ids:
-            rep_sec = id_map.get(str(rid))
-            if rep_sec is None or pd.isna(rep_sec):
-                continue
-            r = int(rep_sec)
-            diff = abs(c - r)
-            delta = min(diff, 3600 - diff)  # circular on 3600s
-            if delta <= 60 and (best_delta is None or delta < best_delta):
-                best_id, best_delta = str(rid), int(delta)
+#         c = int(call_mmss_sec)
+#         best_id, best_delta = None, None
+#         for rid in cand_ids:
+#             rep_sec = id_map.get(str(rid))
+#             if rep_sec is None or pd.isna(rep_sec):
+#                 continue
+#             r = int(rep_sec)
+#             diff = abs(c - r)
+#             delta = min(diff, 3600 - diff)  # circular on 3600s
+#             if delta <= 60 and (best_delta is None or delta < best_delta):
+#                 best_id, best_delta = str(rid), int(delta)
 
-        if best_id is None:
-            return "[]", pd.NA
-        return json.dumps([best_id], ensure_ascii=False), best_delta
+#         if best_id is None:
+#             return "[]", pd.NA
+#         return json.dumps([best_id], ensure_ascii=False), best_delta
 
-    best = calls.apply(
-        lambda r: pd.Series(pick_best_id(r["ids"], r["call_mmss_sec"]), index=["ids_new", "ids_delta_sec"]),
-        axis=1
-    )
-    calls["ids"] = best["ids_new"]
-    calls["ids_delta_sec"] = best["ids_delta_sec"]
+#     best = calls.apply(
+#         lambda r: pd.Series(pick_best_id(r["ids"], r["call_mmss_sec"]), index=["ids_new", "ids_delta_sec"]),
+#         axis=1
+#     )
+#     calls["ids"] = best["ids_new"]
+#     calls["ids_delta_sec"] = best["ids_delta_sec"]
 
-    # ---- Build per-report attachment from chosen calls
-    def _first_id(ids_json_str):
-        try:
-            arr = json.loads(ids_json_str) if isinstance(ids_json_str, str) else []
-        except Exception:
-            arr = []
-        return arr[0] if arr else None
+#     # ---- Build per-report attachment from chosen calls
+#     def _first_id(ids_json_str):
+#         try:
+#             arr = json.loads(ids_json_str) if isinstance(ids_json_str, str) else []
+#         except Exception:
+#             arr = []
+#         return arr[0] if arr else None
 
-    calls["__best_id"] = calls["ids"].apply(_first_id).astype("string")
+#     calls["__best_id"] = calls["ids"].apply(_first_id).astype("string")
 
-    # choose transcript column (prefer 'transcript', else 'transcription_json', else empty)
-    _transcript_col = "transcript" if "transcript" in calls.columns else ("transcription_json" if "transcription_json" in calls.columns else None)
-    if _transcript_col is None:
-        calls["__transcript_tmp"] = ""
-        _transcript_col = "__transcript_tmp"
+#     # choose transcript column (prefer 'transcript', else 'transcription_json', else empty)
+#     _transcript_col = "transcript" if "transcript" in calls.columns else ("transcription_json" if "transcription_json" in calls.columns else None)
+#     if _transcript_col is None:
+#         calls["__transcript_tmp"] = ""
+#         _transcript_col = "__transcript_tmp"
 
-    # keep only rows with a chosen id; for collisions keep the smallest delta
-    calls_attach = (
-        calls.dropna(subset=["__best_id"])
-            .assign(__best_id=lambda d: d["__best_id"].astype(str))
-            .sort_values(["__best_id", "ids_delta_sec"], kind="mergesort")
-            .drop_duplicates(subset=["__best_id"], keep="first")
-            .rename(columns={"__best_id": report_id_col})
-            [[report_id_col, "filename", "site", "phone key", _transcript_col, "ids_delta_sec"]]
-            .rename(columns={_transcript_col: "transcript"})
-    )
+#     # keep only rows with a chosen id; for collisions keep the smallest delta
+#     calls_attach = (
+#         calls.dropna(subset=["__best_id"])
+#             .assign(__best_id=lambda d: d["__best_id"].astype(str))
+#             .sort_values(["__best_id", "ids_delta_sec"], kind="mergesort")
+#             .drop_duplicates(subset=["__best_id"], keep="first")
+#             .rename(columns={"__best_id": report_id_col})
+#             [[report_id_col, "filename", "site", "phone key", _transcript_col, "ids_delta_sec"]]
+#             .rename(columns={_transcript_col: "transcript"})
+#     )
 
-    # ---- Merge onto report and return report CSV
-    report_out = report_df.copy()
+#     # ---- Merge onto report and return report CSV
+#     report_out = report_df.copy()
     
-    # ensure key types align
-    report_out[report_id_col] = report_out[report_id_col].astype(str)
-    calls_attach[report_id_col] = calls_attach[report_id_col].astype(str)
+#     # ensure key types align
+#     report_out[report_id_col] = report_out[report_id_col].astype(str)
+#     calls_attach[report_id_col] = calls_attach[report_id_col].astype(str)
 
-    report_out = report_out.merge(calls_attach, on=report_id_col, how="left")
+#     report_out = report_out.merge(calls_attach, on=report_id_col, how="left")
 
-    # --- Impute site for rows with missing filename (no call attached)
-    known_sites = ["Cheadle", "Heald Green", "Middleton", "Heckmondwike"]
+#     # --- Impute site for rows with missing filename (no call attached)
+#     known_sites = ["Cheadle", "Heald Green", "Middleton", "Heckmondwike"]
 
-    if "site" not in report_out.columns:
-        report_out["site"] = pd.NA
+#     if "site" not in report_out.columns:
+#         report_out["site"] = pd.NA
 
-    idx = report_out.index
+#     idx = report_out.index
 
-    # rows missing filename
-    missing_file = (
-        ~report_out["filename"].notna()
-        if "filename" in report_out.columns
-        else pd.Series(False, index=idx)
-    )
+#     # rows missing filename
+#     missing_file = (
+#         ~report_out["filename"].notna()
+#         if "filename" in report_out.columns
+#         else pd.Series(False, index=idx)
+#     )
 
-    # rows with empty site
-    site_empty = report_out["site"].isna() | report_out["site"].astype(str).str.strip().eq("")
+#     # rows with empty site
+#     site_empty = report_out["site"].isna() | report_out["site"].astype(str).str.strip().eq("")
 
-    # search text
-    text_series = ""
-    if "From" in report_out.columns:
-        text_series += report_out["From"].astype(str) + " "
-    if "Call Activity Details" in report_out.columns:
-        text_series += report_out["Call Activity Details"].astype(str)
+#     # search text
+#     text_series = ""
+#     if "From" in report_out.columns:
+#         text_series += report_out["From"].astype(str) + " "
+#     if "Call Activity Details" in report_out.columns:
+#         text_series += report_out["Call Activity Details"].astype(str)
 
-    text_series = text_series.str.lower()
+#     text_series = text_series.str.lower()
 
-    mask_candidates = missing_file & site_empty
+#     mask_candidates = missing_file & site_empty
 
-    # assign known sites
-    for s in known_sites:
-        s_lower = s.lower().replace(" ", "")
-        site_mask = mask_candidates & text_series.str.replace(" ", "").str.contains(s_lower, na=False)
-        report_out.loc[site_mask, "site"] = s
-        mask_candidates = mask_candidates & ~site_mask  # remove assigned
+#     # assign known sites
+#     for s in known_sites:
+#         s_lower = s.lower().replace(" ", "")
+#         site_mask = mask_candidates & text_series.str.replace(" ", "").str.contains(s_lower, na=False)
+#         report_out.loc[site_mask, "site"] = s
+#         mask_candidates = mask_candidates & ~site_mask  # remove assigned
 
-    # assign Winsford if still empty
-    winsford_mask = mask_candidates & text_series.str.contains("winsford", na=False)
-    report_out.loc[winsford_mask, "site"] = "Winsford"
+#     # assign Winsford if still empty
+#     winsford_mask = mask_candidates & text_series.str.contains("winsford", na=False)
+#     report_out.loc[winsford_mask, "site"] = "Winsford"
 
-    csv_bytes = report_out.to_csv(index=False).encode("utf-8")
-    fname = f'matched_report_{datetime.utcnow().strftime("%Y%m%d-%H%M%S")}.csv'
-    return Response(
-        content=csv_bytes,
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{fname}"'}
-    )
+#     csv_bytes = report_out.to_csv(index=False).encode("utf-8")
+#     fname = f'matched_report_{datetime.utcnow().strftime("%Y%m%d-%H%M%S")}.csv'
+#     return Response(
+#         content=csv_bytes,
+#         media_type="text/csv; charset=utf-8",
+#         headers={"Content-Disposition": f'attachment; filename="{fname}"'}
+#     )

@@ -25,6 +25,9 @@ def transcribe_one(raw: bytes):
                 response_format="text",
             )
 
+    return {"raw": response}
+
+
 #         prompt = f"""
 # Take the following call transcript. It is a two-party phone conversation
 # between a manager (receptionist/staff) and a client (caller).
@@ -45,5 +48,3 @@ def transcribe_one(raw: bytes):
 #         )
 
 #         structured_json = extract_json_block(completion.choices[0].message.content)
-
-    return {"raw": response}

@@ -44,7 +44,8 @@ def get_joined_on_date(d):
             t.filename,
             t.site,
             t.phone_key,
-            t.transcript
+            t.transcript,
+            t.duration_sec
         FROM raw_report r
         LEFT JOIN transcriptions t
         ON r.call_id = t.call_id
@@ -161,7 +162,7 @@ def match_all_calls(raw_df: pd.DataFrame, tran_df: pd.DataFrame) -> pd.DataFrame
 def build_core_metrics(joined: pd.DataFrame) -> pd.DataFrame:
     metrics = pd.DataFrame()
     metrics["call_id"] = joined["call_id"]
-
+    metrics["time_sec"] = joined["duration_sec"]
     # detecting call type
     metrics["call_type"] = None
     dir_lower = joined["call_direction"].astype(str).str.lower()
@@ -192,13 +193,13 @@ def build_core_metrics(joined: pd.DataFrame) -> pd.DataFrame:
     return metrics
 
 
-d = date(2025, 8, 14)
+# d = date(2025, 8, 14)
 
-raw_df, tran_df = fetch_dataframes_for_date(d)
-matches = match_all_calls(raw_df, tran_df)
-update_transcriptions_with_matches(matches)
+# raw_df, tran_df = fetch_dataframes_for_date(d)
+# matches = match_all_calls(raw_df, tran_df)
+# update_transcriptions_with_matches(matches)
 
-joined = pd.DataFrame(get_joined_on_date(d))
-core_metrics = build_core_metrics(joined)
-print(core_metrics)
-insert_metrics_core(core_metrics)
+# joined = pd.DataFrame(get_joined_on_date(d))
+# core_metrics = build_core_metrics(joined)
+# print(core_metrics)
+# insert_metrics_core(core_metrics)

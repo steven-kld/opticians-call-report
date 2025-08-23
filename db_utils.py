@@ -118,7 +118,7 @@ def insert_metrics_core(df: pd.DataFrame, page_size=1000):
     if df.empty:
         return 0
 
-    cols = ["call_id", "call_type", "is_answered", "practice"]
+    cols = ["call_id", "call_type", "is_answered", "practice", "time_sec"]
     missing = [c for c in cols if c not in df.columns]
     if missing:
         raise ValueError(f"metrics DF missing required cols: {missing}")
@@ -127,7 +127,7 @@ def insert_metrics_core(df: pd.DataFrame, page_size=1000):
             for rec in df[cols].itertuples(index=False, name=None)]
 
     query = """
-        INSERT INTO metrics (call_id, call_type, is_answered, practice)
+        INSERT INTO metrics (call_id, call_type, is_answered, practice, time_sec)
         VALUES %s
         ON CONFLICT (call_id) DO NOTHING
     """
