@@ -3,7 +3,7 @@ primary_region = "lhr"
 
 [env]
   PORT = "8080"
-  
+
 [build]
   dockerfile = "Dockerfile"
 
