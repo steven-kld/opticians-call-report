@@ -28,7 +28,7 @@ CREATE TABLE raw_report (
 );
 
 CREATE TABLE metrics (
-    call_id VARCHAR(50) PRIMARY KEY,
+    call_id VARCHAR(255) PRIMARY KEY,
     call_type VARCHAR(25),
     status VARCHAR(25),
     practice VARCHAR(25),
