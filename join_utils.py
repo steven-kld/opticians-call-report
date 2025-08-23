@@ -162,7 +162,7 @@ def match_all_calls(raw_df: pd.DataFrame, tran_df: pd.DataFrame) -> pd.DataFrame
 def build_core_metrics(joined: pd.DataFrame) -> pd.DataFrame:
     metrics = pd.DataFrame()
     metrics["call_id"] = joined["call_id"]
-    metrics["time_sec"] = joined["duration_sec"]
+    metrics["duration_sec"] = joined["duration_sec"]
     # detecting call type
     metrics["call_type"] = None
     dir_lower = joined["call_direction"].astype(str).str.lower()

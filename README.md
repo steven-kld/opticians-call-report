@@ -32,7 +32,7 @@ CREATE TABLE metrics (
     call_type VARCHAR(25),
     status VARCHAR(25),
     practice VARCHAR(25),
-    time_sec INT,
+    duration_sec INT,
     is_proactive BOOLEAN,
     is_booked BOOLEAN,
     is_new_patient BOOLEAN,
