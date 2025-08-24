@@ -4,8 +4,8 @@ from psycopg2.errors import UniqueViolation, ForeignKeyViolation
 from psycopg2.extras import execute_values, RealDictCursor
 import pandas as pd
 
-from dotenv import load_dotenv
-load_dotenv()
+# from dotenv import load_dotenv
+# load_dotenv()
 
 def get_db_config():
     return {
