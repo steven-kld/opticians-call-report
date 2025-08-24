@@ -163,6 +163,7 @@ def build_core_metrics(joined: pd.DataFrame) -> pd.DataFrame:
     metrics = pd.DataFrame()
     metrics["call_id"] = joined["call_id"]
     metrics["duration_sec"] = joined["duration_sec"]
+    metrics["call_time"] = joined["call_time"]
     # detecting call type
     metrics["call_type"] = None
     dir_lower = joined["call_direction"].astype(str).str.lower()
@@ -192,14 +193,15 @@ def build_core_metrics(joined: pd.DataFrame) -> pd.DataFrame:
 
     return metrics
 
+def join_calls_at_date(d):
+    raw_df, tran_df = fetch_dataframes_for_date(d)
+    matches = match_all_calls(raw_df, tran_df)
+    update_transcriptions_with_matches(matches)
+
+    joined = pd.DataFrame(get_joined_on_date(d))
+    core_metrics = build_core_metrics(joined)
+    print(core_metrics)
+    insert_metrics_core(core_metrics)
 
 # d = date(2025, 8, 14)
-
-# raw_df, tran_df = fetch_dataframes_for_date(d)
-# matches = match_all_calls(raw_df, tran_df)
-# update_transcriptions_with_matches(matches)
-
-# joined = pd.DataFrame(get_joined_on_date(d))
-# core_metrics = build_core_metrics(joined)
-# print(core_metrics)
-# insert_metrics_core(core_metrics)
+# join_calls_at_date(d)
