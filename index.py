@@ -1,5 +1,5 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Response
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, UploadFile, Form, File, HTTPException, Response
+from fastapi.responses import HTMLResponse, StreamingResponse
 import re, os, json
 from datetime import datetime
 import pandas as pd
@@ -8,6 +8,7 @@ from db_utils import insert_raw_report_df
 from zip_utils import save_zip, get_wav_names_zip, get_existing_calls, extract_selected_wavs, schedule_transcription_job
 from join_utils import join_calls_at_date
 from transcript_utils import generate_flags_from_transcripts
+from report_utils import get_raw_on_date, build_practice_report
 
 app = FastAPI()
 
@@ -32,12 +33,11 @@ async def upload_form():
     <pre id="zipOut" style="white-space:pre-wrap;"></pre>
     <hr>
 
-    <h3>3. Match report + calls CSVs</h3>
-    <form id="matchForm">
-      <input type="file" name="csv_files" accept=".csv" multiple required>
-      <button type="submit">Match</button>
+    <h3>3. Generate report by date</h3>
+    <form id="dateForm">
+      <input type="date" name="report_date" required>
+      <button type="submit">Get XLSX</button>
     </form>
-    <hr>
 
     <script>
       async function postAndDownload(formElem, url) {
@@ -50,7 +50,7 @@ async def upload_form():
         const blob = await res.blob();
         const cd = res.headers.get('Content-Disposition') || '';
         const m = cd.match(/filename="?(.*?)"?$/);
-        const filename = (m && m[1]) || 'result.csv';
+        const filename = (m && m[1]) || 'result.xlsx';
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
         a.download = filename;
@@ -62,8 +62,6 @@ async def upload_form():
 
       document.getElementById('csvForm')
         .addEventListener('submit', (e) => { e.preventDefault(); postAndDownload(e.target, '/upload_csv'); });
-      document.getElementById('matchForm')
-        .addEventListener('submit', (e) => { e.preventDefault(); postAndDownload(e.target, '/match_csv'); });
 
       document.getElementById('zipForm')
         .addEventListener('submit', async (e) => {
@@ -82,12 +80,18 @@ async def upload_form():
           const ct = res.headers.get('Content-Type') || '';
           if (ct.includes('application/json')) {
             const payload = await res.json();
-            // expect backend returns { to_process_count: N }
             const { to_process_count = 0 } = payload || {};
             out.textContent = `Files to process: ${to_process_count}`;
           } else {
             await postAndDownload(e.target, '/upload_zip');
           }
+        });
+
+      // New date form
+      document.getElementById('dateForm')
+        .addEventListener('submit', (e) => { 
+          e.preventDefault(); 
+          postAndDownload(e.target, '/report_by_date'); 
         });
     </script>
   </body>
@@ -209,6 +213,29 @@ async def upload_zip(zip_file: UploadFile = File(...)):
         try: os.remove(zip_path)
         except Exception: pass
         return {"to_process_count": 0}
+
+@app.post("/report_by_date")
+async def report_by_date(report_date: str = Form(...)):
+    # Convert date string to datetime.date
+    dt = datetime.strptime(report_date, "%Y-%m-%d").date()
+
+    raw_df = get_raw_on_date(dt)
+    report_df = build_practice_report(raw_df)
+    
+    # Write to in-memory XLSX with two sheets
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        report_df.to_excel(writer, index=False, sheet_name="report")
+        raw_df.to_excel(writer, index=False, sheet_name="raw data")
+    output.seek(0)
+
+    filename = f"calls-{dt}.xlsx"
+
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
 
 # TODO
 # @app.post("/manual_process")
