@@ -34,6 +34,7 @@ CREATE TABLE metrics (
     status VARCHAR(25),
     practice VARCHAR(25),
     duration_sec INT,
+    is_dropped BOOLEAN,
     is_proactive BOOLEAN,
     is_booked BOOLEAN,
     is_new_patient BOOLEAN,

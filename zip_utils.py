@@ -2,10 +2,12 @@ import asyncio, json, os, re, shutil, tempfile, zipfile, io, wave
 from pathlib import Path
 from fastapi import UploadFile
 from typing import Dict, List
-from datetime import datetime
+from datetime import datetime, date
 import pandas as pd
 from ai_utils import transcribe_one
 from db_utils import query_all, run_query
+from join_utils import join_calls_at_date
+from transcript_utils import generate_flags_from_transcripts
 
 def extract_site(name: str):
     sites = ["Cheadle", "Heald Green", "Middleton", "Heckmondwike", "Winsford"]
@@ -126,6 +128,7 @@ async def _transcription_worker(
             return int(0)
     
     try:
+        date_arr = []
         for file_name in to_process:
             path = name_to_path.get(file_name)
             if not path:
@@ -135,6 +138,9 @@ async def _transcription_worker(
             site = extract_site(file_name) or ""
             phone_key = extract_phone_key(file_name) or ""
             dt, iso = extract_datetime_from_filename(file_name)
+            if dt.date() not in date_arr:
+                date_arr.append(dt.date())
+
             call_time = iso or None
 
             try:
@@ -152,8 +158,19 @@ async def _transcription_worker(
                     """,
                     (file_name, site, phone_key, transcript, call_time, duration_sec,)
                 )
+
             except Exception as e:
                 print(f"FAIL {file_name} | {e!r}")
+        
+        # process the date
+        if len(date_arr) == 1:
+            d = date_arr[0]
+            join_calls_at_date(d)
+            generate_flags_from_transcripts(d)
+        else:
+            print("WARN! MULTIPLE DATES PROCESSED")
+            print(date_arr)
+
     finally:
         # cleanup artifacts
         try: os.remove(zip_path)
@@ -168,3 +185,4 @@ def schedule_transcription_job(
     tmpdir: str,
 ):
     asyncio.create_task(_transcription_worker(name_to_path, to_process, zip_path, tmpdir))
+    

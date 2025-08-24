@@ -4,8 +4,8 @@ from psycopg2.errors import UniqueViolation, ForeignKeyViolation
 from psycopg2.extras import execute_values, RealDictCursor
 import pandas as pd
 
-# from dotenv import load_dotenv
-# load_dotenv()
+from dotenv import load_dotenv
+load_dotenv()
 
 def get_db_config():
     return {
@@ -135,4 +135,43 @@ def insert_metrics_core(df: pd.DataFrame, page_size=1000):
     with get_conn() as conn:
         with conn.cursor() as cur:
             psycopg2.extras.execute_values(cur, query, rows, page_size=page_size)
+        conn.commit()
+
+def update_metrics_with_flags(flags_df):
+    rows = flags_df.dropna(subset=["call_id"])
+    if rows.empty:
+        return
+
+    # Convert dataframe rows to list of tuples
+    params = [
+        (
+            r["call_id"],
+            r.get("is_new_patient", False),
+            r.get("is_voicemail", False),
+            r.get("is_proactive", False),
+            r.get("is_dropped", False),
+            r.get("is_booked", False),
+        )
+        for _, r in rows.iterrows()
+    ]
+
+    query = """
+        UPDATE metrics m
+        SET
+            is_new_patient = data.is_new_patient,
+            is_voicemail   = data.is_voicemail,
+            is_proactive   = data.is_proactive,
+            is_dropped     = data.is_dropped,
+            is_booked      = data.is_booked
+        FROM (VALUES %s) AS data(
+            call_id, is_new_patient, is_voicemail, is_proactive, is_dropped, is_booked
+        )
+        WHERE m.call_id = data.call_id;
+    """
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            psycopg2.extras.execute_values(
+                cur, query, params, template=None, page_size=500
+            )
         conn.commit()
