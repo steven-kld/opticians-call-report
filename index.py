@@ -8,7 +8,7 @@ from db_utils import insert_raw_report_df
 from zip_utils import save_zip, get_wav_names_zip, get_existing_calls, extract_selected_wavs, schedule_transcription_job
 from join_utils import join_calls_at_date
 from transcript_utils import generate_flags_from_transcripts
-from report_utils import get_raw_on_date, build_practice_report
+from report_utils import get_raw_on_date, build_practice_report, check_report_complete
 
 app = FastAPI()
 
@@ -36,7 +36,7 @@ async def upload_form():
     <h3>3. Generate report by date</h3>
     <form id="dateForm">
       <input type="date" name="report_date" required>
-      <button type="submit">Get XLSX</button>
+      <button type="submit" disabled>Get XLSX</button>
     </form>
 
     <script>
@@ -93,6 +93,56 @@ async def upload_form():
           e.preventDefault(); 
           postAndDownload(e.target, '/report_by_date'); 
         });
+
+      // Get the elements for the date form
+      const reportDateInput = document.querySelector('#dateForm input[name="report_date"]');
+      const getXLSXButton = document.querySelector('#dateForm button[type="submit"]');
+
+      // Add a status message div to the form for user feedback
+      const statusDiv = document.createElement('div');
+      statusDiv.style.marginTop = '10px';
+      statusDiv.id = 'dateStatus';
+      getXLSXButton.parentNode.insertBefore(statusDiv, getXLSXButton.nextSibling);
+
+      // Disable the button by default
+      getXLSXButton.disabled = true;
+
+      // Listen for changes on the date input
+      reportDateInput.addEventListener('change', async (e) => {
+          const date = e.target.value;
+          statusDiv.textContent = 'Checking...';
+          getXLSXButton.disabled = true;
+
+          if (!date) {
+              statusDiv.textContent = '';
+              return;
+          }
+
+          const formData = new FormData();
+          formData.append('report_date', date);
+
+          try {
+              const res = await fetch('/check_date', {
+                  method: 'POST',
+                  body: formData
+              });
+
+              if (!res.ok) {
+                  throw new Error(await res.text());
+              }
+
+              const { calls, complete } = await res.json();
+
+              if (complete) {
+                  statusDiv.innerHTML = `<span style="color:green;">Total calls: ${calls}. Data is complete.</span>`;
+                  getXLSXButton.disabled = false;
+              } else {
+                  statusDiv.innerHTML = `<span style="color:orange;">Total calls: ${calls}. Data is incomplete.</span>`;
+              }
+          } catch (error) {
+              statusDiv.innerHTML = `<span style="color:red;">Error: ${error.message}</span>`;
+          }
+      });
     </script>
   </body>
 </html>
@@ -311,3 +361,15 @@ async def report_by_date(report_date: str = Form(...)):
         headers={"Content-Disposition": f'attachment; filename="{filename}"'}
     )
 
+@app.post("/check_date")
+async def check_date_route(report_date: str = Form(...)):
+    try:
+        d = datetime.strptime(report_date, '%Y-%m-%d')
+        count = check_report_complete(d)["count"]
+
+        return {
+            "calls": count,
+            "complete": count > 0
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
