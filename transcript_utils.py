@@ -1,5 +1,4 @@
 from datetime import datetime, timedelta, date
-import json, re
 import pandas as pd
 import numpy as np
 from db_utils import run_query, update_metrics_with_flags

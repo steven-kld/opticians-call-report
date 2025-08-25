@@ -1,9 +1,7 @@
 from datetime import datetime, timedelta, date
-import json, re
 import pandas as pd
 import numpy as np
-from db_utils import run_query, update_metrics_with_flags
-from ai_utils import detect_voicemail, detect_proactive, detect_new_patient, detect_dropped, detect_booked
+from db_utils import run_query
 
 def day_bounds(d):
     start = datetime.combine(d, datetime.min.time())

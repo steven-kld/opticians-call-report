@@ -6,8 +6,6 @@ import pandas as pd
 from io import BytesIO
 from db_utils import insert_raw_report_df
 from zip_utils import save_zip, get_wav_names_zip, get_existing_calls, extract_selected_wavs, schedule_transcription_job
-from join_utils import join_calls_at_date
-from transcript_utils import generate_flags_from_transcripts
 from report_utils import get_raw_on_date, build_practice_report, check_report_complete
 
 app = FastAPI()
