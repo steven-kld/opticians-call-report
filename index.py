@@ -40,36 +40,8 @@ async def upload_form():
     </form>
 
     <script>
-      async function callGas(data) {
-        try {
-          const res = await fetch("/report_by_date_gas", { method: 'POST', body: data });
-            
-          // Check if the response was successful
-          if (!res.ok) {
-              // Read the error message once
-              const errorMessage = await res.text();
-              console.error("Failed to call gas endpoint:", errorMessage);
-              return null; // Return early or throw an error
-          }
-
-          // Read the JSON body only if the response was successful
-          const responseData = await res.json();
-          console.log("Successfully called gas endpoint");
-          
-          return responseData.doc_url;
-
-        } catch (error) {
-            console.error("Error calling gas endpoint:", error);
-        }
-      }
-
       async function postAndDownload(formElem, url) {
         const data = new FormData(formElem);
-        if (url == "/report_by_date") {
-          let doc_url = await callGas(data);
-          console.log(doc_url);
-          window.open(doc_url, '_blank');
-        }
         const res = await fetch(url, { method: 'POST', body: data });
         if (!res.ok) {
           alert(await res.text().catch(() => res.statusText));
@@ -117,9 +89,39 @@ async def upload_form():
 
       // New date form
       document.getElementById('dateForm')
-        .addEventListener('submit', (e) => { 
+        .addEventListener('submit', async (e) => { 
           e.preventDefault();
           postAndDownload(e.target, '/report_by_date');
+
+          const newTab = window.open('', '_blank');
+
+          // Step 3: Call the GAS endpoint asynchronously
+          const data = new FormData(e.target);
+          try {
+            const res = await fetch("/report_by_date_gas", { method: 'POST', body: data });
+
+            if (!res.ok) {
+              const errorMessage = await res.text();
+              console.error("Failed to call gas endpoint:", errorMessage);
+              newTab.close(); // Close the blank tab on error
+              return;
+            }
+
+            const responseData = await res.json();
+            console.log("Successfully called gas endpoint");
+            
+            // Step 4: Redirect the new tab to the Google Doc URL
+            if (responseData.doc_url) {
+              newTab.location.href = responseData.doc_url;
+            } else {
+              console.error("No doc_url received from GAS.");
+              newTab.close();
+            }
+
+          } catch (error) {
+            console.error("An error occurred during fetch:", error);
+            newTab.close(); // Close the tab on network/fetch errors
+          }         
         });
 
       // Get the elements for the date form
