@@ -16,17 +16,17 @@ async def upload_form():
 <!doctype html>
 <html>
   <body>
-    <h3>1. Upload CSVs → get aggregated report</h3>
+    <h3>1. Upload call report CSVs</h3>
     <form id="csvForm">
       <input type="file" name="csv_files" accept=".csv" multiple required>
-      <button type="submit">Build report</button>
+      <button type="submit">Process raw report</button>
     </form>
     <hr>
 
-    <h3>2. Upload audio ZIP → count files to process</h3>
+    <h3>2. Upload audio ZIP</h3>
     <form id="zipForm">
       <input type="file" name="zip_file" accept=".zip" required>
-      <button type="submit">Check</button>
+      <button type="submit">Process audio</button>
     </form>
     <pre id="zipOut" style="white-space:pre-wrap;"></pre>
     <hr>
@@ -34,7 +34,7 @@ async def upload_form():
     <h3>3. Generate report by date</h3>
     <form id="dateForm">
       <input type="date" name="report_date" required>
-      <button type="submit" disabled>Get XLSX</button>
+      <button type="submit" disabled>Get report</button>
     </form>
 
     <script>
