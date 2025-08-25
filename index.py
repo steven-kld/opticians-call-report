@@ -1,12 +1,14 @@
 from fastapi import FastAPI, UploadFile, Form, File, HTTPException, Response
 from fastapi.responses import HTMLResponse, StreamingResponse
-import re, os, json
+import re, os, json, requests
 from datetime import datetime
 import pandas as pd
 from io import BytesIO
 from db_utils import insert_raw_report_df
 from zip_utils import save_zip, get_wav_names_zip, get_existing_calls, extract_selected_wavs, schedule_transcription_job
 from report_utils import get_raw_on_date, build_practice_report, check_report_complete
+
+GAS_URL = os.getenv("GAS_URL")
 
 app = FastAPI()
 
@@ -38,8 +40,36 @@ async def upload_form():
     </form>
 
     <script>
+      async function callGas(data) {
+        try {
+          const res = await fetch("/report_by_date_gas", { method: 'POST', body: data });
+            
+          // Check if the response was successful
+          if (!res.ok) {
+              // Read the error message once
+              const errorMessage = await res.text();
+              console.error("Failed to call gas endpoint:", errorMessage);
+              return null; // Return early or throw an error
+          }
+
+          // Read the JSON body only if the response was successful
+          const responseData = await res.json();
+          console.log("Successfully called gas endpoint");
+          
+          return responseData.doc_url;
+
+        } catch (error) {
+            console.error("Error calling gas endpoint:", error);
+        }
+      }
+
       async function postAndDownload(formElem, url) {
         const data = new FormData(formElem);
+        if (url == "/report_by_date") {
+          let doc_url = await callGas(data);
+          console.log(doc_url);
+          window.open(doc_url, '_blank');
+        }
         const res = await fetch(url, { method: 'POST', body: data });
         if (!res.ok) {
           alert(await res.text().catch(() => res.statusText));
@@ -88,8 +118,8 @@ async def upload_form():
       // New date form
       document.getElementById('dateForm')
         .addEventListener('submit', (e) => { 
-          e.preventDefault(); 
-          postAndDownload(e.target, '/report_by_date'); 
+          e.preventDefault();
+          postAndDownload(e.target, '/report_by_date');
         });
 
       // Get the elements for the date form
@@ -358,6 +388,33 @@ async def report_by_date(report_date: str = Form(...)):
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'}
     )
+
+@app.post("/report_by_date_gas")
+async def report_by_date_gas(report_date: str = Form(...)):
+    dt = datetime.strptime(report_date, "%Y-%m-%d").date()
+
+    raw_df = get_raw_on_date(dt)
+    report_df = build_practice_report(raw_df)
+    report_df = report_df.fillna('')
+    json_data = report_df.to_dict(orient='records')
+
+    try:
+        print(json_data)
+        response = requests.post(GAS_URL, json={"report": json_data, "filename": f"calls-{dt}"})
+        response.raise_for_status()
+        gas_response = response.json()
+        
+        if "doc_url" in gas_response:
+            report_document_url = gas_response["doc_url"]
+        else:
+            raise ValueError("Google Apps Script response did not contain 'doc_url'")
+            
+        return {"doc_url": report_document_url}
+        
+    except requests.exceptions.RequestException as e:
+        raise HTTPException(status_code=500, detail=f"Error communicating with Google Apps Script: {e}")
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=f"Invalid response from Google Apps Script: {e}")
 
 @app.post("/check_date")
 async def check_date_route(report_date: str = Form(...)):

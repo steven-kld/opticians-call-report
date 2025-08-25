@@ -6,3 +6,4 @@ openai
 python-multipart
 psycopg2-binary
 openpyxl
+requests

@@ -83,14 +83,14 @@ def build_practice_report(raw_df):
         return durations
 
     # Helper to format seconds to min:sec string
-    def format_min_sec(seconds_list):
+    def format_min(seconds_list):
         formatted_list = []
         for s in seconds_list:
             if s is not None:
                 s = int(s)
-                minutes = s // 60
-                seconds = s % 60
-                formatted_list.append(f"{minutes}:{seconds:02d}")
+                minutes = round(s // 60)
+                
+                formatted_list.append(minutes)
             else:
                 formatted_list.append('')
         return formatted_list
@@ -133,11 +133,11 @@ def build_practice_report(raw_df):
     outbound = raw_df[raw_df['call_type'] == 'outbound']
 
     report_rows.append(['Total Calls'] + agg_counts(raw_df, 'True'))
-    report_rows.append(['Duration (total)'] + format_min_sec(agg_duration(raw_df)))
+    report_rows.append(['Duration minutes (total)'] + format_min(agg_duration(raw_df)))
 
     report_rows.append(['']) # Spacer row
     report_rows.append(['Inbound Calls'] + agg_counts(inbound, 'True'))
-    report_rows.append(['Duration (inbound)'] + format_min_sec(agg_duration(inbound)))
+    report_rows.append(['Duration minutes (inbound)'] + format_min(agg_duration(inbound)))
     report_rows.append(['Redirected (inbound)'] + agg_counts(inbound, 'is_redirected'))
     report_rows.append(['Answered Directly (inbound)'] + agg_counts(inbound, 'is_answered & ~is_dropped & ~is_voicemail'))
     report_rows.append(['Voicemails Received (inbound)'] + agg_counts(inbound, 'is_voicemail'))
@@ -148,7 +148,7 @@ def build_practice_report(raw_df):
 
     report_rows.append(['']) # Spacer row
     report_rows.append(['Outbound Calls'] + agg_counts(outbound, 'True'))
-    report_rows.append(['Duration (outbound)'] + format_min_sec(agg_duration(outbound)))
+    report_rows.append(['Duration minutes (outbound)'] + format_min(agg_duration(outbound)))
     report_rows.append(['Dropped/Unanswered (outbound)'] + agg_counts(outbound, 'is_dropped'))
 
     report_rows.append(['']) # Spacer row
