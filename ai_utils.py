@@ -57,7 +57,7 @@ Transcript:
 
     resp = completion.choices[0].message.content.strip().lower()
     print(resp)
-    print("-----------")
+    print("-----------") 
     return bool(re.search(r"\btrue\b", resp))
 
 def detect_proactive(transcript):

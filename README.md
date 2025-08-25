@@ -21,6 +21,13 @@ CREATE TABLE raw_report (
     call_id VARCHAR(255) PRIMARY KEY,
     call_time TIMESTAMP NOT NULL,
     call_from VARCHAR(255) NOT NULL,
+    is_voicemail BOOLEAN,
+    is_dropped BOOLEAN,
+    is_redirected BOOLEAN,
+    is_recalled BOOLEAN,
+    recall_id VARCHAR(255);
+    phone_key BIGINT,
+    call_duration INT NOT NULL,
     call_cost FLOAT,
     call_direction VARCHAR(255) NOT NULL,
     call_status VARCHAR(255) NOT NULL,

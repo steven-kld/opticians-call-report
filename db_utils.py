@@ -22,13 +22,13 @@ def get_conn():
     return psycopg2.connect(**get_db_config())
 
 def insert_raw_report_df(df: pd.DataFrame):
-    COLUMNS = ['Call ID','Call Time','From','Cost','Direction','Status','Call Activity Details']
-    REQUIRED = ['Call ID','Call Time','From','Direction','Status']  # NOT NULLs in your table
+    COLUMNS = ['Call ID', 'Call Time', 'From', 'Is Voicemail', 'Is Dropped', 'Is Redirected', 'Is Recalled', 'Recall Id', 'Phone Key', 'Duration', 'Cost', 'Direction', 'Status', 'Call Activity Details']
+    REQUIRED = ['Call ID', 'Call Time','From', 'Is Voicemail', 'Is Dropped', 'Is Redirected', 'Is Recalled', 'Recall Id', 'Phone Key', 'Duration', 'Direction','Status']  # NOT NULLs in your table
 
     df = df[COLUMNS].copy()
 
     # Normalize/trim strings (avoids '  id  ' and empty -> None)
-    for col in ['Call ID','From','Direction','Status','Call Activity Details']:
+    for col in ['Call ID', 'From', 'Is Voicemail', 'Is Dropped', 'Is Redirected', 'Is Recalled', 'Recall Id', 'Phone Key', 'Direction', 'Duration', 'Status', 'Call Activity Details']:
         if col in df.columns:
             df[col] = df[col].astype(str).str.strip()
     df.replace({'': None}, inplace=True)
@@ -50,7 +50,7 @@ def insert_raw_report_df(df: pd.DataFrame):
 
     sql = """
         INSERT INTO raw_report
-          (call_id, call_time, call_from, call_cost, call_direction, call_status, call_activity_details)
+          (call_id, call_time, call_from, is_voicemail, is_dropped, is_redirected, is_recalled, recall_id, phone_key, call_duration, call_cost, call_direction, call_status, call_activity_details)
         VALUES %s
         ON CONFLICT (call_id) DO NOTHING
     """

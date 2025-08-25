@@ -151,6 +151,41 @@ async def handle_upload(
     def join_series(s: pd.Series) -> str:
         vals = [str(x) for x in s.dropna().astype(str)]
         return ", ".join(vals)
+    
+    def hms_to_seconds(val: str) -> int:
+      try:
+          h, m, s = val.split(":")
+          return int(h) * 3600 + int(m) * 60 + int(s)
+      except Exception:
+          return 0
+      
+    def extract_duration(group: pd.DataFrame) -> int:
+        answered = group.loc[group["Status"] == "Answered", "Talking"]
+        if not answered.empty:
+            return hms_to_seconds(answered.iloc[0])
+        return 0
+    
+    def extract_phone_key(row: pd.Series) -> str:
+        from_val = str(row.get("From", ""))
+        if from_val.isdigit():
+            return from_val[-7:]
+        details = str(row.get("Call Activity Details", ""))
+        match = re.search(r"\((\d{6,})\)", details)
+        if match:
+            number = match.group(1)
+            return number[-7:]
+        return 0
+    
+    def extract_is_voicemail(val: str) -> bool:
+      if isinstance(val, str) and "voicemail" in val.lower():
+          return True
+      return False
+    
+    def extract_is_redirected(val: str) -> bool:
+      if isinstance(val, str) and "redirected" in val.lower():
+          return True
+      return False
+
 
     agg = {
         "Call Time": "first",
@@ -158,11 +193,50 @@ async def handle_upload(
         "Cost": "first",
         "Direction": join_series,
         "Status": join_series,
-        "Call Activity Details": join_series,
+        "Call Activity Details": join_series
     }
 
     per_call_df = combined.groupby("Call ID", as_index=False).agg(agg)
-    per_call_df = per_call_df.drop(columns=["_ts"], errors="ignore")
+    per_call_df["Duration"] = combined.groupby("Call ID").apply(extract_duration).reset_index(drop=True)
+    per_call_df["Phone Key"] = per_call_df.apply(extract_phone_key, axis=1)
+    per_call_df["Is Voicemail"] = per_call_df["Call Activity Details"].apply(extract_is_voicemail)
+    per_call_df["Is Dropped"] = (
+        per_call_df["Is Voicemail"] | (per_call_df["Duration"] < 10)
+    )
+    per_call_df["Is Redirected"] = per_call_df["Status"].apply(extract_is_redirected)
+
+    # find recalls
+    per_call_df["Is Recalled"] = False
+    per_call_df["Recall Id"] = None
+
+    # make sure Call Time is datetime
+    per_call_df["Call Time"] = pd.to_datetime(per_call_df["Call Time"], errors="coerce")
+
+    for idx, row in per_call_df.iterrows():
+        if (row["Is Voicemail"] or row.get("Is Dropped", False)):
+            # skip outbound rows
+            if isinstance(row["Direction"], str) and "outbound" in row["Direction"].lower():
+                continue
+
+            pk = row["Phone Key"]
+            call_time = row["Call Time"]
+
+            candidates = per_call_df[
+                (per_call_df["Phone Key"] == pk) &
+                (per_call_df["Call Time"] > call_time) &
+                (
+                    per_call_df["Direction"].str.contains("Outbound", case=False, na=False)
+                    | (per_call_df["Duration"] > 10)
+                )
+            ].sort_values("Call Time")
+
+            if not candidates.empty:
+                first_match = candidates.iloc[0]
+                per_call_df.at[idx, "Is Recalled"] = True
+                per_call_df.at[idx, "Recall Id"] = first_match["Call ID"]
+
+                
+        per_call_df = per_call_df.drop(columns=["_ts"], errors="ignore")
 
     # serialize to CSV
     report_df = pd.DataFrame(per_call_df)
@@ -237,9 +311,3 @@ async def report_by_date(report_date: str = Form(...)):
         headers={"Content-Disposition": f'attachment; filename="{filename}"'}
     )
 
-# TODO
-# @app.post("/manual_process")
-# async def manual_process(date):
-#     d = date(2025, 8, 14)
-#     join_calls_at_date(d)
-#     generate_flags_from_transcripts(d)

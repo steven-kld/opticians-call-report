@@ -27,6 +27,27 @@ def get_transcriptions_on_date(d):
         fetch_all=True
     )
 
+def get_unrecorded_on_date(d):
+    start, end = day_bounds(d)
+    return run_query(
+        """
+        SELECT 
+            m.call_id,
+            r.call_duration,
+            r.is_voicemail,
+            r.is_dropped,
+            r.is_redirected
+        FROM metrics AS m
+        JOIN raw_report AS r 
+          ON m.call_id = r.call_id
+        WHERE m.call_time >= %s AND m.call_time < %s
+        AND m.is_proactive IS NULL
+        ORDER BY m.call_time
+        """,
+        (start, end),
+        fetch_all=True
+    )
+
 def generate_flags_from_transcripts(d):
     tr = pd.DataFrame(get_transcriptions_on_date(d))
     outbound = tr.loc[tr["call_type"] == "outbound", ["call_id", "call_type", "transcript"]].copy()
@@ -69,5 +90,15 @@ def generate_flags_from_transcripts(d):
 
     update_metrics_with_flags(calls)
 
-# d = date(2025, 8, 14)
+    # fill the rest for current date
+    unrecorded = get_unrecorded_on_date(d)
+    columns = ['call_id', 'is_voicemail', 'is_dropped', 'is_redirected']
+    unrecorded = pd.DataFrame(unrecorded, columns=columns)
+    unrecorded["is_booked"] = False
+    unrecorded["is_new_patient"] = False
+    unrecorded["is_proactive"] = False
+    update_metrics_with_flags(unrecorded)
+
+# d = date(2025, 8, 12)
 # generate_flags_from_transcripts(d)
+# print(len(get_unrecorded_on_date(d)))
